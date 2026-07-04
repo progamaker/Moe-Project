@@ -1,0 +1,26 @@
+# P22 — MoE router robustness. Конфиг эксперимента.
+# Значения дублируют CONFIG в src/moe_model.py (единый источник — Python-словарь).
+
+seed: 42
+
+model:
+  n_experts: 8        # N
+  top_k: 2            # k
+  expert_hidden: 128  # MLP: 784 -> 128 -> 10
+  input_dim: 784
+  n_classes: 10
+
+train:
+  train_subset: null  # null = полный train (60000); число = подвыборка
+  batch_size: 256
+  epochs: 12
+  lr: 0.001
+  lambda_balance: 0.01  # вес load-balancing (switch-style) aux loss
+
+attack:
+  eps_grid: [0.0, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3]
+  pgd_steps: 20
+  alpha_factor: 2.5     # alpha = eps/10 * alpha_factor
+  n_attack: 2000        # размер подвыборки test для PGD
+  random_M: 20          # число случайных возмущений на точку (эксп. A)
+  transition_eps: 0.1   # eps для матрицы переходов
