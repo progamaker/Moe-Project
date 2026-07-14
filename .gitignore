@@ -6,3 +6,9 @@ cifar/checkpoints/
 cifar/data/
 __pycache__/
 *.pyc
+
+# CIFAR эксперименты — веса и датасет не коммитим
+cifar/checkpoints/
+cifar/data/
+__pycache__/
+*.pyc
