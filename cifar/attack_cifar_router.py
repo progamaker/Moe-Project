@@ -208,6 +208,54 @@ def part_b(model, Xa, ya, device):
     return rows
 
 
+def part_c(model, Xa, ya, device, n_seeds=5):
+    """Контроль: случайный (НЕ градиентный) шум той же амплитуды eps.
+    Сравнение с Частью A показывает, специфична ли уязвимость направлению
+    градиента (worst-case) или роутер хрупок к люому шуму такой силы."""
+    print("\n" + "=" * 70)
+    print("ЧАСТЬ C: контроль — случайный шум той же амплитуды (не adversarial)")
+    print("=" * 70)
+
+    with torch.no_grad():
+        feats0 = backbone(model, Xa, device)
+        p0, topi0, g0 = model.moe_stage.route(feats0)
+        pred0 = mix_from_features(model, feats0, topi0, g0).argmax(-1)
+    base_acc = (pred0 == ya).float().mean().item()
+    top1_0 = p0.argmax(-1)
+    set0 = [set(t.tolist()) for t in topi0]
+    print(f"база: acc={base_acc:.4f}\n")
+
+    hdr = f"{'eps':>5} | {'sw1':>6} {'swk':>6} | {'accD':>6}   (среднее ± std по {n_seeds} сидам)"
+    print(hdr); print("-" * len(hdr))
+    rows = []
+    for eps in EPS_GRID:
+        sw1_all, swk_all, accD_all = [], [], []
+        for seed in range(n_seeds):
+            gen = torch.Generator().manual_seed(seed)
+            noise = ((torch.rand(Xa.shape, generator=gen) * 2 - 1) * eps).to(device)
+            xp = (Xa + noise).clamp(0, 1)
+            with torch.no_grad():
+                feats_p = backbone(model, xp, device)
+                p, topi, g = model.moe_stage.route(feats_p)
+                yD = mix_from_features(model, feats_p, topi, g)
+            top1 = p.argmax(-1)
+            sets = [set(t.tolist()) for t in topi]
+            set_chg = torch.tensor([s != s0 for s, s0 in zip(sets, set0)], device=device)
+            sw1_all.append((top1 != top1_0).float().mean().item())
+            swk_all.append(set_chg.float().mean().item())
+            accD_all.append((yD.argmax(-1) == ya).float().mean().item())
+        row = dict(eps=eps, sw1_mean=np.mean(sw1_all), sw1_std=np.std(sw1_all),
+                   swk_mean=np.mean(swk_all), swk_std=np.std(swk_all),
+                   accD_mean=np.mean(accD_all), accD_std=np.std(accD_all))
+        rows.append(row)
+        print(f"{eps:5.2f} | {row['sw1_mean']:.3f}±{row['sw1_std']:.3f} "
+              f"{row['swk_mean']:.3f}±{row['swk_std']:.3f} | "
+              f"{row['accD_mean']:.3f}±{row['accD_std']:.3f}")
+    print("\nsw1/swk = доля смены top-1 / доля смены множества top-k (под случайным шумом)")
+    print("accD = точность при полном возмущении (маршрут + вход эксперта), случайный шум")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
@@ -238,10 +286,18 @@ def main():
     ya = torch.tensor([test_ds[i][1] for i in idx]).to(device)
     print(f"атакуем {len(Xa)} примеров")
 
+    with torch.no_grad():
+        feats0 = backbone(model, Xa, device)
+        _, topi0, g0 = model.moe_stage.route(feats0)
+        pred0 = mix_from_features(model, feats0, topi0, g0).argmax(-1)
+    base_acc = (pred0 == ya).float().mean().item()
+    print(f"чистая (без атаки) точность на этой выборке: {base_acc:.4f}")
+
     rows_a = part_a(model, Xa, ya, device)
     rows_b = part_b(model, Xa, ya, device)
+    rows_c = part_c(model, Xa, ya, device)
 
-    out = dict(N=N, k=k, part_a=rows_a, part_b=rows_b)
+    out = dict(N=N, k=k, base_acc=base_acc, part_a=rows_a, part_b=rows_b, part_c=rows_c)
     out_path = os.path.join(os.path.dirname(args.ckpt), f"attack_{os.path.basename(args.ckpt)}.json")
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
